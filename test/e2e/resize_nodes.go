@@ -34,12 +34,16 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	awscloud "k8s.io/kubernetes/pkg/cloudprovider/providers/aws"
+	"k8s.io/kubernetes/pkg/fields"
 )
 
 const (
 	serveHostnameImage        = "gcr.io/google_containers/serve_hostname:1.1"
 	resizeNodeReadyTimeout    = 2 * time.Minute
 	resizeNodeNotReadyTimeout = 2 * time.Minute
+	nodeRecoverTimeout		  = 5 * time.Minute
+	podNotReadyTimeout 		  = 1 * time.Minute
+	podReadyTimeout 		  = 3 * time.Minute
 	testPort                  = 9376
 )
 
@@ -287,14 +291,7 @@ func verifyPods(c *client.Client, ns, name string, wantName bool, replicas int) 
 	return nil
 }
 
-// Blocks outgoing network traffic on 'node'. Then verifies that 'podNameToDisappear',
-// that belongs to replication controller 'rcName', really disappeared.
-// Finally, it checks that the replication controller recreates the
-// pods on another node and that now the number of replicas is equal 'replicas'.
-// At the end (even in case of errors), the network traffic is brought back to normal.
-// This function executes commands on a node so it will work only for some
-// environments.
-func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replicas int, podNameToDisappear string, node *api.Node) {
+func getExternalIPforSSH(node *api.Node) string{
 	Logf("Getting external IP address for %s", node.Name)
 	host := ""
 	for _, a := range node.Status.Addresses {
@@ -306,7 +303,18 @@ func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replica
 	if host == "" {
 		Failf("Couldn't get the external IP of host %s with addresses %v", node.Name, node.Status.Addresses)
 	}
+	return host
+}
 
+// Blocks outgoing network traffic on 'node'. Then verifies that 'podNameToDisappear',
+// that belongs to replication controller 'rcName', really disappeared.
+// Finally, it checks that the replication controller recreates the
+// pods on another node and that now the number of replicas is equal 'replicas'.
+// At the end (even in case of errors), the network traffic is brought back to normal.
+// This function executes commands on a node so it will work only for some
+// environments.
+func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replicas int, podNameToDisappear string, node *api.Node) {
+	host := getExternalIPforSSH(node)
 	By(fmt.Sprintf("block network traffic from node %s to the master", node.Name))
 	master := ""
 	switch testContext.Provider {
@@ -377,6 +385,10 @@ func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replica
 		Failf("Node %s did not become not-ready within %v", node.Name, resizeNodeNotReadyTimeout)
 	}
 
+	Logf("Waiting %v for all pods on node %s to be not-ready after node becomes not-ready", podNotReadyTimeout, node.Name)
+	//////////////////////////////==================================
+
+
 	Logf("Waiting for pod %s to be removed", podNameToDisappear)
 	err := waitForRCPodToDisappear(c, ns, rcName, podNameToDisappear)
 	Expect(err).NotTo(HaveOccurred())
@@ -386,6 +398,17 @@ func performTemporaryNetworkFailure(c *client.Client, ns, rcName string, replica
 	Expect(err).NotTo(HaveOccurred())
 
 	// network traffic is unblocked in a deferred function
+}
+
+// shut down eth0 on node for 180 seconds to simulate temporary network partition
+func inititateTemporaryNetworkPartition(c *client.Client, node *api.Node) {
+	host := getExternalIPforSSH(node)
+	Logf("Turning off network interface on %s", node.Name)
+	partitionCmd := "nohup sh -c 'sleep 10 && sudo ifdown eth0 && sleep 180 && sudo ifup eth0' >/dev/null 2>&1 &"
+	if result, err := SSH(partitionCmd, host, testContext.Provider); result.Code != 0 || err != nil {
+		LogSSHResult(result)
+		Failf("Unexpected error: %v", err)
+	}
 }
 
 var _ = Describe("Nodes [Disruptive]", func() {
@@ -546,6 +569,53 @@ var _ = Describe("Nodes [Disruptive]", func() {
 					if pod.Spec.NodeName != node.Name {
 						Logf("Pod %s found on invalid node: %s instead of %s", pod.Name, pod.Spec.NodeName, node.Name)
 					}
+				}
+			})
+
+			// What happens in this test:
+			// 	Network connectivity on a node is cut off for 180 seconds to simulate network partition
+			// Expect to observe:
+			// 1. Node is marked NotReady after timeout by nodecontroller (40seconds)
+			// 2. All pods on node are marked NotReady shortly after #1
+			// 3. Node and pods return to Ready after connectivivty recovers
+			It("All pods on the unreachable node should be marked as NotReady upon the node turn NotReady " +
+				"AND all pods should be mark back to Ready when the node get back to Ready before pod eviction timeout", func() {
+				By("choose a node - we will block all network traffic on this node")
+				options := api.ListOptions{}
+				nodes, err := c.Nodes().List(options)
+				Expect(err).NotTo(HaveOccurred())
+				filterNodes(nodes, func(node api.Node) bool {
+					return isNodeConditionSetAsExpected(&node, api.NodeReady, true)
+				})
+				if len(nodes.Items) <= 0 {
+					Failf("No node were found Ready: %d", len(nodes.Items))
+				}
+				node := nodes.Items[0]
+				opts := api.ListOptions{FieldSelector: fields.OneTermEqualSelector(client.PodHost, node.Name)}
+				if err = waitForMatchPodsCondition(c, opts, "Running and Ready", podReadyTimeout, podRunningReady); err != nil{
+					Failf("Pods on node %s are not ready and running within %v: %v", node.Name, podReadyTimeout, err)
+				}
+
+				By(fmt.Sprintf("Performing temporary network partition on node %s", node.Name))
+				inititateTemporaryNetworkPartition(c, &node)
+
+				By("Observing node and pod status change from Ready to NotReady after network partition")
+				if !waitForNodeToBe(c, node.Name, api.NodeReady, false, resizeNodeNotReadyTimeout) {
+					Failf("Node %s did not become NotReady within %v", node.Name, resizeNodeNotReadyTimeout)
+				}
+				if err = waitForMatchPodsCondition(c, opts, "NotReady", podNotReadyTimeout, podNotReady); err != nil{
+					Failf("Pods on node %s did not become NotReady within %v: %v", node.Name, podNotReadyTimeout, err)
+				}
+
+				//Wait for network connectivity to recover and check node/pod status
+				time.Sleep(30 * time.Second)
+
+				By("Observing node and pod status change from NotReady to Ready after network connectivity recovers")
+				if !waitForNodeToBe(c, node.Name, api.NodeReady, true, nodeRecoverTimeout) {
+					Failf("Node %s did not become Ready within %v", node.Name, nodeRecoverTimeout)
+				}
+				if err = waitForMatchPodsCondition(c, opts, "Running and Ready", podReadyTimeout, podRunningReady); err != nil{
+					Failf("Pods on node %s did not become ready and running within %v: %v", node.Name, podReadyTimeout, err)
 				}
 			})
 		})
