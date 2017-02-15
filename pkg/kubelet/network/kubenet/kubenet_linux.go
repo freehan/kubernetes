@@ -753,17 +753,19 @@ func podIsExited(p *kubecontainer.Pod) bool {
 	return true
 }
 
+// buildCNIRuntimeConf returns CNI runtime config
+// If failed to retrieve network namespace from network host, return runtime config with empty network namespace
 func (plugin *kubenetNetworkPlugin) buildCNIRuntimeConf(ifName string, id kubecontainer.ContainerID) (*libcni.RuntimeConf, error) {
 	netnsPath, err := plugin.host.GetNetNS(id.ID)
 	if err != nil {
-		glog.Errorf("Kubenet failed to retrieve network namespace path: %v", err)
+		err = fmt.Errorf("kubenet failed to retrieve network namespace path: %v", err)
 	}
 
 	return &libcni.RuntimeConf{
 		ContainerID: id.ID,
 		NetNS:       netnsPath,
 		IfName:      ifName,
-	}, nil
+	}, err
 }
 
 func (plugin *kubenetNetworkPlugin) addContainerToNetwork(config *libcni.NetworkConfig, ifName, namespace, name string, id kubecontainer.ContainerID) (*cnitypes.Result, error) {
@@ -783,7 +785,9 @@ func (plugin *kubenetNetworkPlugin) addContainerToNetwork(config *libcni.Network
 func (plugin *kubenetNetworkPlugin) delContainerFromNetwork(config *libcni.NetworkConfig, ifName, namespace, name string, id kubecontainer.ContainerID) error {
 	rt, err := plugin.buildCNIRuntimeConf(ifName, id)
 	if err != nil {
-		return fmt.Errorf("Error building CNI config: %v", err)
+		// Proceed to tear down with returned runtime config anyway
+		// with empty NetNS, CNI plugin will conduct best effort clean up
+		glog.Errorf("Error building CNI config for teardown: %v", err)
 	}
 
 	glog.V(3).Infof("Removing %s/%s from '%s' with CNI '%s' plugin and runtime: %+v", namespace, name, config.Network.Name, config.Network.Type, rt)
