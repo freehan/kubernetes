@@ -62,6 +62,46 @@ type EndpointsHandler interface {
 	OnEndpointsSynced()
 }
 
+
+//type EndpointSliceHandler interface {
+//	// OnEndpointsAdd is called whenever creation of new endpoints object
+//	// is observed.
+//	OnEndpointSliceAdd(endpoints *v1.Endpoints)
+//	// OnEndpointsUpdate is called whenever modification of an existing
+//	// endpoints object is observed.
+//	OnEndpointSliceUpdate(oldEndpoints, endpoints *v1.Endpoints)
+//	// OnEndpointsDelete is called whever deletion of an existing endpoints
+//	// object is observed.
+//	OnEndpointSliceDelete(endpoints *v1.Endpoints)
+//	// OnEndpointsSynced is called once all the initial event handlers were
+//	// called and the state is fully propagated to local cache.
+//	OnEndpointSliceSynced()
+//
+// Consider having a IsSupported function
+// May not be needed if there is a shared implementation of EndpointSliceHandler
+//  IsSupported() bool
+//}
+
+
+// May not need a NoopEndpointSliceHandler
+// type NoopEndpointSliceHandler struct {
+//
+// }
+// IsSupported return false
+//
+
+// Need To find a right place to hold the RealEndpointSlice Handler
+// RealEndpointSliceHandler populates the real EndpointChangeMap
+// type RealEndpointSliceHandler struct {
+//       EndpointChangeMap
+// }
+//
+// IsSupported return true
+//
+
+
+
+
 // EndpointsConfig tracks a set of endpoints configurations.
 type EndpointsConfig struct {
 	listerSynced  cache.InformerSynced

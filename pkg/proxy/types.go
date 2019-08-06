@@ -29,6 +29,7 @@ import (
 type ProxyProvider interface {
 	config.EndpointsHandler
 	config.ServiceHandler
+	// config.EndpointSliceHandler
 
 	// Sync immediately synchronizes the ProxyProvider's current state to proxy rules.
 	Sync()
@@ -37,6 +38,8 @@ type ProxyProvider interface {
 	// It does not return.
 	SyncLoop()
 }
+
+
 
 // ServicePortName carries a namespace + name + portname.  This is the unique
 // identifier for a load-balanced service.

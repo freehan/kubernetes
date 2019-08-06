@@ -441,6 +441,7 @@ func (em proxyEndpointsMap) unmerge(other proxyEndpointsMap, curServices proxySe
 // Proxier is an hns based proxy for connections between a localhost:lport
 // and services that provide the actual backends.
 type Proxier struct {
+	//consider EndpointSliceHandler
 	// endpointsChanges and serviceChanges contains all changes to endpoints and
 	// services that happened since policies were synced. For a single object,
 	// changes are accumulated, i.e. previous is state from before all of them,

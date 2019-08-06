@@ -325,6 +325,12 @@ func NewProxier(ipt utiliptables.Interface,
 
 	healthChecker := healthcheck.NewServer(hostname, recorder, nil, nil) // use default implementations of deps
 
+	// tracker := NewEndpointChangeTracker
+	// endpointSliceHandler = NewEndpointSliceHandler(tracker)
+	// proxier = &Proxier {
+	//   tracker: tracker
+	//   EndpointSliceHandler: endpointSliceHandler
+	// }
 	isIPv6 := ipt.IsIpv6()
 	proxier := &Proxier{
 		portsMap:                 make(map[utilproxy.LocalPort]utilproxy.Closeable),
@@ -541,6 +547,10 @@ func (proxier *Proxier) OnServiceSynced() {
 	// Sync unconditionally - this is called once per lifetime.
 	proxier.syncProxyRules()
 }
+
+// consider refactor EndpointHandler & ServiceHandler into a shared handler struct
+// So that ipvs and iptables do not have duplicate code
+// Add EndpointSliceHandler
 
 // OnEndpointsAdd is called whenever creation of new endpoints object
 // is observed.

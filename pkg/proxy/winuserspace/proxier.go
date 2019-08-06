@@ -80,6 +80,8 @@ func logTimeout(err error) bool {
 // Proxier is a simple proxy for TCP connections between a localhost:lport
 // and services that provide the actual implementations.
 type Proxier struct {
+	// consider this:
+	// proxy.NoopEndpointSliceHandler
 	loadBalancer   LoadBalancer
 	mu             sync.Mutex // protects serviceMap
 	serviceMap     map[ServicePortPortalName]*serviceInfo
